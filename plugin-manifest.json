@@ -1,0 +1,12 @@
+{
+  "service": "CRM",
+  "modules": {
+    "widgets": [
+      {
+        "name": "Booking Widget",
+        "location": "blueprint",
+        "url": "/app/widget.html"
+      }
+    ]
+  }
+}

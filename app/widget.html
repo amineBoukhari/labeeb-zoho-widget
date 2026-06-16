@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<script src="https://live.zwidgets.com/js-sdk/1.2/ZohoEmbededAppSDK.min.js"></script>
+</head>
+<body style="margin:0;font-family:sans-serif;">
+<div id="debug" style="padding:8px;background:#f1efe8;font-size:13px;border-bottom:1px solid #ccc;">
+  Waiting for CRM context…
+</div>
+<details style="font-size:12px;border-bottom:1px solid #ccc;">
+  <summary style="padding:6px 8px;cursor:pointer;background:#f7f7f5;">Lead object</summary>
+  <pre id="leadDump" style="margin:0;padding:8px;max-height:300px;overflow:auto;background:#fafafa;font-size:11px;white-space:pre-wrap;word-break:break-all;">—</pre>
+</details>
+<div id="inline-container"></div>
+<script src="https://bookings.nimbuspop.com/assets/embed.js"></script>
+<script>
+ZOHO.embeddedApp.on("PageLoad", function(data) {
+var dbg = document.getElementById("debug");
+var leadId = data && data.EntityId;
+if (Array.isArray(leadId)) leadId = leadId[0];
+if (!leadId) {
+        dbg.style.background = "#fceaea";
+        //dbg.innerHTML = "No lead ID. Raw data: <code>" + JSON.stringify(data) + "</code>";
+return;
+    }
+    dbg.style.background = "#e1f5ee";
+    //dbg.innerHTML = "Lead assigned: <b>" + leadId + "</b>. Fetching record…";
+    ZOHO.CRM.API.getRecord({ Entity: "Leads", RecordID: leadId })
+        .then(function(resp) {
+var lead = resp && resp.data && resp.data[0];
+if (!lead) {
+                dbg.style.background = "#fceaea";
+                //dbg.innerHTML = "Lead not found: <code>" + JSON.stringify(resp) + "</code>";
+return;
+            }
+console.log("LEAD RECORD:", lead);
+document.getElementById("leadDump").textContent = JSON.stringify(lead, null, 2);
+var status = lead.Lead_Status;
+if (status !== "Qualifié") {
+                dbg.style.background = "#faeeda";
+                //dbg.innerHTML = "Skipped: lead not at Qualifié step (current: <b>" + (status || "—") + "</b>)";
+return;
+            }
+var fullName = lead.Full_Name || ((lead.First_Name || "") + " " + (lead.Last_Name || "")).trim();
+var email = lead.Email || "";
+var phone = lead.Phone || "";
+var bookingUrl = "https://labeebacademy.zohobookings.com/portal-embed#/4935786000000036177"
+                + "?Name=" + encodeURIComponent(fullName)
+                + "&Email=" + encodeURIComponent(email)
+                + "&Contact Number=" + encodeURIComponent(phone);
+            dbg.style.background = "#e1f5ee";
+            //dbg.innerHTML = "Booking URL ready for <b>" + fullName + "</b>";
+            Bookings.inlineEmbed({
+                url: bookingUrl,
+                parent: "#inline-container",
+                height: "600px"
+            });
+          console.log("BOOKING URL:", bookingUrl);
+          document.getElementById("leadDump").textContent = bookingUrl
+        })
+        .catch(function(err) {
+            dbg.style.background = "#fceaea";
+            //dbg.innerHTML = "getRecord failed: <code>" + JSON.stringify(err) + "</code>";
+        });
+});
+ZOHO.embeddedApp.init();
+</script>
+</body>
+</html>
