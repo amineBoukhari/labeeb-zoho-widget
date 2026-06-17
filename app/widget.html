@@ -16,6 +16,7 @@
 <script>
 var CURRENT_LEAD_ID = null;
 var ALREADY_UPDATED = false;
+var TRANSITION_NAME = "Prendre un rendez-vous"; // ⚠ doit correspondre EXACTEMENT au nom dans le Blueprint
 
 ZOHO.embeddedApp.on("PageLoad", function(data) {
   var dbg = document.getElementById("debug");
@@ -64,9 +65,60 @@ ZOHO.embeddedApp.on("PageLoad", function(data) {
     });
 });
 
+// ─── Exécuter la transition Blueprint ───
+function executeBlueprintTransition() {
+  var dbg = document.getElementById("debug");
+  dbg.innerHTML = "Réservation confirmée — passage à Reservation RDV…";
+
+  // 1. Récupérer les transitions disponibles
+  ZOHO.CRM.API.getBlueprintTransitions({ Entity: "Leads", RecordID: CURRENT_LEAD_ID })
+    .then(function(resp) {
+      console.log("Transitions:", resp);
+
+      var transitions = resp && resp.blueprint && resp.blueprint[0] && resp.blueprint[0].transitions;
+      if (!transitions) {
+        dbg.innerHTML = "Aucune transition disponible.";
+        return;
+      }
+
+      var transitionId = null;
+      transitions.forEach(function(t) {
+        console.log("Transition dispo:", t.name, t.id);
+        if (t.name === TRANSITION_NAME) {
+          transitionId = t.id;
+        }
+      });
+
+      if (!transitionId) {
+        dbg.innerHTML = "Transition '" + TRANSITION_NAME + "' introuvable.";
+        ALREADY_UPDATED = false;
+        return;
+      }
+
+      // 2. Exécuter la transition
+      return ZOHO.CRM.API.updateBlueprintTransition({
+        Entity: "Leads",
+        RecordID: CURRENT_LEAD_ID,
+        BlueprintData: { transition_id: transitionId }
+      });
+    })
+    .then(function(execResp) {
+      if (!execResp) return;
+      console.log("Transition exécutée:", execResp);
+      dbg.innerHTML = "✅ Lead passé à Reservation RDV.";
+      if (ZOHO.CRM.UI && ZOHO.CRM.UI.Record && ZOHO.CRM.UI.Record.refresh) {
+        ZOHO.CRM.UI.Record.refresh();
+      }
+    })
+    .catch(function(err) {
+      console.log("Erreur transition:", err);
+      ALREADY_UPDATED = false;
+      dbg.innerHTML = "Réservé, mais erreur transition : " + JSON.stringify(err);
+    });
+}
+
 // ─── Écouter la confirmation de réservation ───
 window.addEventListener("message", function(event) {
-  // Log tous les messages pour identifier le bon événement (à voir dans la console F12)
   console.log("postMessage reçu:", event.origin, event.data);
 
   if (ALREADY_UPDATED || !CURRENT_LEAD_ID) return;
@@ -89,28 +141,7 @@ window.addEventListener("message", function(event) {
 
   if (isBooked) {
     ALREADY_UPDATED = true;
-    var dbg = document.getElementById("debug");
-    dbg.style.background = "#e1f5ee";
-    dbg.innerHTML = "Réservation confirmée — passage à Qualifié…";
-
-    ZOHO.CRM.API.updateRecord({
-      Entity: "Leads",
-      RecordID: CURRENT_LEAD_ID,
-      APIData: { "id": CURRENT_LEAD_ID, "Lead_Status": "Qualifié" }
-    })
-    .then(function(resp) {
-      console.log("Lead mis à jour:", resp);
-      dbg.innerHTML = "✅ Lead passé à Qualifié.";
-      // Rafraîchir la fiche du lead dans CRM
-      if (ZOHO.CRM.UI && ZOHO.CRM.UI.Record && ZOHO.CRM.UI.Record.refresh) {
-        ZOHO.CRM.UI.Record.refresh();
-      }
-    })
-    .catch(function(err) {
-      console.log("Erreur update:", err);
-      ALREADY_UPDATED = false; // permettre un nouvel essai
-      dbg.innerHTML = "Réservé, mais erreur de mise à jour : " + JSON.stringify(err);
-    });
+    executeBlueprintTransition();
   }
 });
 
