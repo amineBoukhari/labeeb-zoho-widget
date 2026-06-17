@@ -23,20 +23,26 @@
 var CURRENT_LEAD_ID = null;
 var DONE = false;
 
+console.log("=== Widget chargé ===");
+
 ZOHO.embeddedApp.on("PageLoad", function(data) {
+  console.log("PageLoad reçu:", JSON.stringify(data));
   var dbg = document.getElementById("debug");
   var leadId = data && data.EntityId;
   if (Array.isArray(leadId)) leadId = leadId[0];
   if (!leadId) {
     dbg.style.background = "#fceaea";
     dbg.innerHTML = "Erreur : aucun lead ID reçu.";
+    console.log("ERREUR: pas de leadId");
     return;
   }
   CURRENT_LEAD_ID = leadId;
+  console.log("Lead ID:", leadId);
   dbg.innerHTML = "Chargement du lead " + leadId + "…";
 
   ZOHO.CRM.API.getRecord({ Entity: "Leads", RecordID: leadId })
     .then(function(resp) {
+      console.log("getRecord réponse:", JSON.stringify(resp).substring(0, 500));
       var lead = resp && resp.data && resp.data[0];
       if (!lead) {
         dbg.style.background = "#fceaea";
@@ -46,6 +52,7 @@ ZOHO.embeddedApp.on("PageLoad", function(data) {
       var fullName = lead.Full_Name || ((lead.First_Name || "") + " " + (lead.Last_Name || "")).trim();
       var email    = lead.Email || "";
       var phone    = lead.Phone || "";
+      console.log("Lead:", fullName, email, phone);
 
       var bookingUrl = "https://labeebacademy.zohobookings.com/portal-embed#/4935786000000036177"
         + "?Name="           + encodeURIComponent(fullName)
@@ -62,15 +69,23 @@ ZOHO.embeddedApp.on("PageLoad", function(data) {
       });
 
       document.getElementById("confirmBtn").disabled = false;
+      console.log("Bouton activé");
     })
     .catch(function(err) {
+      console.log("ERREUR getRecord:", JSON.stringify(err));
       dbg.style.background = "#fceaea";
       dbg.innerHTML = "Erreur : " + JSON.stringify(err);
     });
 });
 
 document.getElementById("confirmBtn").addEventListener("click", function() {
-  if (DONE || !CURRENT_LEAD_ID) return;
+  console.log("=== Bouton cliqué ===");
+  console.log("DONE:", DONE, "CURRENT_LEAD_ID:", CURRENT_LEAD_ID);
+
+  if (DONE || !CURRENT_LEAD_ID) {
+    console.log("Bloqué: DONE=" + DONE + " leadId=" + CURRENT_LEAD_ID);
+    return;
+  }
 
   var dbg = document.getElementById("debug");
   var btn = document.getElementById("confirmBtn");
@@ -78,31 +93,62 @@ document.getElementById("confirmBtn").addEventListener("click", function() {
   dbg.style.background = "#fff8e1";
   dbg.innerHTML = "Vérification de la réservation…";
 
-  // 1. Appeler la fonction Deluge pour vérifier le booking
+  console.log("Appel ZOHO.CRM.FUNCTIONS.execute...");
+  console.log("api_name: verifierBooking");
+  console.log("arguments:", JSON.stringify({ "leadId": CURRENT_LEAD_ID }));
+
+  // Vérifier si ZOHO.CRM.FUNCTIONS existe
+  if (!ZOHO.CRM.FUNCTIONS || !ZOHO.CRM.FUNCTIONS.execute) {
+    console.log("ERREUR: ZOHO.CRM.FUNCTIONS.execute n'existe pas !");
+    dbg.style.background = "#fceaea";
+    dbg.innerHTML = "Erreur : FUNCTIONS.execute non disponible dans ce contexte.";
+    btn.disabled = false;
+    return;
+  }
+
   ZOHO.CRM.FUNCTIONS.execute({
     api_name: "verifierBooking",
     arguments: JSON.stringify({ "leadId": CURRENT_LEAD_ID })
   })
   .then(function(result) {
-    console.log("Résultat vérification:", result);
+    console.log("=== Résultat brut ===");
+    console.log("Type:", typeof result);
+    console.log("JSON:", JSON.stringify(result));
 
-    var output = result && result.details && result.details.output;
-    console.log("Output:", output);
+    // Essayer tous les formats possibles
+    var output = null;
+    if (result && result.details && result.details.output) {
+      output = result.details.output;
+      console.log("Format: result.details.output =", output);
+    }
+    if (!output && result && result.output) {
+      output = result.output;
+      console.log("Format: result.output =", output);
+    }
+    if (!output && result && result.data) {
+      output = result.data;
+      console.log("Format: result.data =", output);
+    }
+    if (!output && typeof result === "string") {
+      output = result;
+      console.log("Format: string directe =", output);
+    }
+    console.log("Output final:", output);
 
     if (!output || output === "false") {
-      // Pas de RDV trouvé
+      console.log("Pas de RDV trouvé");
       btn.disabled = false;
       dbg.style.background = "#fceaea";
-      dbg.innerHTML = "⚠ Aucune réservation trouvée. Réservez d'abord un créneau, puis réessayez.";
+      dbg.innerHTML = "⚠ Aucune réservation trouvée. Réservez d'abord un créneau.";
       return;
     }
 
-    // RDV trouvé — output contient le booking_id (ex: #LA-00073)
     DONE = true;
+    console.log("RDV trouvé:", output);
     dbg.style.background = "#e1f5ee";
     dbg.innerHTML = "✅ RDV vérifié (" + output + "). Enregistrement…";
 
-    // 2. Écrire le Booking_ID sur le lead
+    console.log("Écriture Booking_ID sur le lead...");
     return ZOHO.CRM.API.updateRecord({
       Entity: "Leads",
       RecordID: CURRENT_LEAD_ID,
@@ -110,25 +156,37 @@ document.getElementById("confirmBtn").addEventListener("click", function() {
     });
   })
   .then(function(updResp) {
-    if (!updResp) return;
-    console.log("Booking_ID enregistré:", updResp);
+    if (!updResp) {
+      console.log("updResp est null/undefined — arrêt");
+      return;
+    }
+    console.log("Booking_ID enregistré:", JSON.stringify(updResp));
+    var dbg = document.getElementById("debug");
     dbg.innerHTML = "✅ Réservation confirmée. Rafraîchissement…";
 
-    // 3. Rafraîchir la fiche
     if (ZOHO.CRM.UI && ZOHO.CRM.UI.Record && ZOHO.CRM.UI.Record.refresh) {
-      ZOHO.CRM.UI.Record.refresh();
+      console.log("Appel refresh...");
+      ZOHO.CRM.UI.Record.refresh()
+        .then(function(r) { console.log("Refresh OK:", r); })
+        .catch(function(e) { console.log("Refresh KO:", e); });
+    } else {
+      console.log("refresh non disponible");
     }
   })
   .catch(function(err) {
-    console.log("Erreur:", err);
+    console.log("=== ERREUR ===");
+    console.log("Type:", typeof err);
+    console.log("JSON:", JSON.stringify(err));
     DONE = false;
     btn.disabled = false;
+    var dbg = document.getElementById("debug");
     dbg.style.background = "#fceaea";
     dbg.innerHTML = "Erreur : " + JSON.stringify(err);
   });
 });
 
 ZOHO.embeddedApp.init();
+console.log("ZOHO.embeddedApp.init() appelé");
 </script>
 </body>
 </html>
