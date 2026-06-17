@@ -11,6 +11,9 @@
 <div id="inline-container"></div>
 <script src="https://bookings.nimbuspop.com/assets/embed.js"></script>
 <script>
+var CURRENT_LEAD_ID = null;
+var ALREADY_UPDATED = false;
+
 ZOHO.embeddedApp.on("PageLoad", function(data) {
   var dbg = document.getElementById("debug");
   var leadId = data && data.EntityId;
@@ -20,6 +23,7 @@ ZOHO.embeddedApp.on("PageLoad", function(data) {
     dbg.innerHTML = "Erreur : aucun lead ID reçu.";
     return;
   }
+  CURRENT_LEAD_ID = leadId;
   dbg.innerHTML = "Chargement du lead " + leadId + "…";
 
   ZOHO.CRM.API.getRecord({ Entity: "Leads", RecordID: leadId })
@@ -34,31 +38,13 @@ ZOHO.embeddedApp.on("PageLoad", function(data) {
       var email    = lead.Email || "";
       var phone    = lead.Phone || "";
 
-      // ─── TEST : écrire le Booking_ID dès le chargement ───
-      var bookingMarker = "BOOKED_" + Date.now();
-      ZOHO.CRM.API.updateRecord({
-        Entity: "Leads",
-        RecordID: leadId,
-        APIData: { "id": leadId, "Booking_ID": bookingMarker }
-      })
-      .then(function(updResp) {
-        console.log("TEST Booking_ID écrit:", updResp);
-        dbg.innerHTML = "✅ TEST: Booking_ID rempli (" + bookingMarker + "). Rafraîchis la fiche pour voir le bouton.";
-        if (ZOHO.CRM.UI && ZOHO.CRM.UI.Record && ZOHO.CRM.UI.Record.refresh) {
-          ZOHO.CRM.UI.Record.refresh();
-        }
-      })
-      .catch(function(updErr) {
-        console.log("TEST erreur update:", updErr);
-        dbg.style.background = "#fceaea";
-        dbg.innerHTML = "Erreur écriture Booking_ID: " + JSON.stringify(updErr);
-      });
-      // ─── FIN TEST ───
-
       var bookingUrl = "https://labeebacademy.zohobookings.com/portal-embed#/4935786000000036177"
         + "?Name="           + encodeURIComponent(fullName)
         + "&Email="          + encodeURIComponent(email)
         + "&Contact Number=" + encodeURIComponent(phone);
+
+      dbg.style.background = "#e1f5ee";
+      dbg.innerHTML = "Réservez un créneau pour <b>" + fullName + "</b>";
 
       Bookings.inlineEmbed({
         url: bookingUrl,
@@ -71,6 +57,62 @@ ZOHO.embeddedApp.on("PageLoad", function(data) {
       dbg.innerHTML = "Erreur : " + JSON.stringify(err);
     });
 });
+
+// ─── Enregistrer le Booking_ID après réservation réelle ───
+function saveBookingId() {
+  var dbg = document.getElementById("debug");
+  dbg.innerHTML = "Réservation confirmée — enregistrement…";
+
+  var bookingMarker = "BOOKED_" + Date.now();
+
+  ZOHO.CRM.API.updateRecord({
+    Entity: "Leads",
+    RecordID: CURRENT_LEAD_ID,
+    APIData: { "id": CURRENT_LEAD_ID, "Booking_ID": bookingMarker }
+  })
+  .then(function(resp) {
+    console.log("Booking_ID enregistré:", resp);
+    dbg.style.background = "#e1f5ee";
+    dbg.innerHTML = "✅ RDV enregistré. Le bouton 'RDV Réservé' est disponible.";
+    if (ZOHO.CRM.UI && ZOHO.CRM.UI.Record && ZOHO.CRM.UI.Record.refresh) {
+      ZOHO.CRM.UI.Record.refresh();
+    }
+  })
+  .catch(function(err) {
+    console.log("Erreur:", err);
+    ALREADY_UPDATED = false;
+    dbg.innerHTML = "Réservé, mais erreur : " + JSON.stringify(err);
+  });
+}
+
+// ─── Détecter la confirmation de réservation ───
+window.addEventListener("message", function(event) {
+  console.log("postMessage reçu:", event.origin, event.data);
+
+  if (ALREADY_UPDATED || !CURRENT_LEAD_ID) return;
+
+  var d = event.data;
+  var isBooked = false;
+
+  if (typeof d === "string") {
+    var ls = d.toLowerCase();
+    if (ls.indexOf("book") !== -1 || ls.indexOf("success") !== -1 || ls.indexOf("confirm") !== -1) {
+      isBooked = true;
+    }
+  }
+  if (typeof d === "object" && d !== null) {
+    var s = JSON.stringify(d).toLowerCase();
+    if (s.indexOf("success") !== -1 || s.indexOf("booked") !== -1 || s.indexOf("confirm") !== -1) {
+      isBooked = true;
+    }
+  }
+
+  if (isBooked) {
+    ALREADY_UPDATED = true;
+    saveBookingId();
+  }
+});
+
 ZOHO.embeddedApp.init();
 </script>
 </body>
