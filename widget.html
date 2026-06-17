@@ -15,7 +15,7 @@
   <button id="confirmBtn" style="padding:12px 28px;background:#2d9d78;color:#fff;border:none;border-radius:6px;font-size:15px;font-weight:600;cursor:pointer;" disabled>
     Confirmer la réservation
   </button>
-  <p id="btnMsg" style="font-size:12px;color:#888;margin:8px 0 0;">Cliquez ici après avoir réservé le créneau</p>
+  <p style="font-size:12px;color:#888;margin:8px 0 0;">Cliquez ici après avoir réservé le créneau</p>
 </div>
 
 <pre id="logs" style="padding:8px;background:#1e1e1e;color:#0f0;font-size:11px;max-height:150px;overflow:auto;margin:0;display:none;"></pre>
@@ -23,8 +23,9 @@
 <script src="https://bookings.nimbuspop.com/assets/embed.js"></script>
 <script>
 var CURRENT_LEAD_ID = null;
-var CURRENT_EMAIL = null;
 var DONE = false;
+
+var FUNCTION_URL = "https://www.zohoapis.com/crm/v7/functions/verifierbooking/actions/execute?auth_type=apikey&zapikey=1003.5e1fa7a06b077cb1817aa29faf27ba40.4efc00aca6384b66d3bb42ce1d41c294";
 
 function log(msg) {
   console.log(msg);
@@ -57,8 +58,6 @@ ZOHO.embeddedApp.on("PageLoad", function(data) {
       var fullName = lead.Full_Name || ((lead.First_Name || "") + " " + (lead.Last_Name || "")).trim();
       var email    = lead.Email || "";
       var phone    = lead.Phone || "";
-      CURRENT_EMAIL = email;
-      log("Email: " + email);
 
       var bookingUrl = "https://labeebacademy.zohobookings.com/portal-embed#/4935786000000036177"
         + "?Name="           + encodeURIComponent(fullName)
@@ -83,7 +82,7 @@ ZOHO.embeddedApp.on("PageLoad", function(data) {
 });
 
 document.getElementById("confirmBtn").addEventListener("click", function() {
-  if (DONE || !CURRENT_LEAD_ID || !CURRENT_EMAIL) return;
+  if (DONE || !CURRENT_LEAD_ID) return;
 
   var dbg = document.getElementById("debug");
   var btn = document.getElementById("confirmBtn");
@@ -92,112 +91,57 @@ document.getElementById("confirmBtn").addEventListener("click", function() {
   dbg.innerHTML = "Vérification de la réservation…";
   log("=== Vérification démarrée ===");
 
-  // Calculer les dates
-  var now = new Date();
-  var from = new Date(now);
-  from.setDate(from.getDate() - 30);
-  var to = new Date(now);
-  to.setDate(to.getDate() + 90);
-
-  var months = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
-  var fromStr = ("0" + from.getDate()).slice(-2) + "-" + months[from.getMonth()] + "-" + from.getFullYear();
-  var toStr = ("0" + to.getDate()).slice(-2) + "-" + months[to.getMonth()] + "-" + to.getFullYear();
-
-  var dataParam = JSON.stringify({
-    "customer_email": CURRENT_EMAIL,
-    "from_time": fromStr,
-    "to_time": toStr
-  });
-
-  log("Params: " + dataParam);
-  log("Appel CONNECTION.invoke...");
-
-  // Vérifier si CONNECTION.invoke existe
-  if (!ZOHO.CRM.CONNECTION || !ZOHO.CRM.CONNECTION.invoke) {
-    log("ERREUR: ZOHO.CRM.CONNECTION.invoke n'existe pas");
-    dbg.style.background = "#fceaea";
-    dbg.innerHTML = "Erreur : CONNECTION.invoke non disponible.";
-    btn.disabled = false;
-    return;
-  }
-
-  ZOHO.CRM.CONNECTION.invoke({
-    "name": "bookings_connection",
-    "method": "POST",
-    "url": "https://www.zohoapis.com/bookings/v1/json/fetchappointment",
-    "param_type": 1,
-    "parameters": { "data": dataParam }
+  // Appel de la fonction Deluge via REST API + API Key
+  fetch(FUNCTION_URL, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ "arguments": JSON.stringify({ "leadId": CURRENT_LEAD_ID }) })
   })
-  .then(function(result) {
-    log("Résultat brut: " + JSON.stringify(result).substring(0, 500));
+  .then(function(r) {
+    log("HTTP status: " + r.status);
+    return r.json();
+  })
+  .then(function(data) {
+    log("Réponse: " + JSON.stringify(data).substring(0, 600));
 
-    // Extraire la réponse
-    var bookingResp = null;
-    if (result && result.details) bookingResp = result.details;
-    if (result && result.response) bookingResp = result.response;
-    if (typeof result === "string") {
-      try { bookingResp = JSON.parse(result); } catch(e) {}
-    }
+    // Le retour de la fonction est dans data.details.output ou data.output
+    var output = null;
+    if (data && data.details && data.details.output) output = data.details.output;
+    if (!output && data && data.output) output = data.output;
+    log("Output: " + output);
 
-    log("bookingResp: " + JSON.stringify(bookingResp).substring(0, 500));
-
-    // Chercher un RDV valide
-    var foundBookingId = null;
-    try {
-      var resp = bookingResp.response || bookingResp;
-      var rv = resp.returnvalue || resp;
-      var appts = rv.response || rv;
-
-      if (appts === "No Match Found" || !appts || typeof appts === "string") {
-        log("Aucun RDV trouvé");
-      } else if (Array.isArray(appts)) {
-        for (var i = 0; i < appts.length; i++) {
-          var a = appts[i];
-          if (a.customer_email === CURRENT_EMAIL && (a.status === "upcoming" || a.status === "yet_to_mark")) {
-            foundBookingId = a.booking_id;
-            log("RDV valide: " + foundBookingId);
-            break;
-          }
-        }
-      }
-    } catch(e) {
-      log("Erreur parsing: " + e.message);
-    }
-
-    if (!foundBookingId) {
-      log("Pas de RDV → bloqué");
+    if (!output || output === "false") {
       btn.disabled = false;
       dbg.style.background = "#fceaea";
       dbg.innerHTML = "⚠ Aucune réservation trouvée. Réservez d'abord un créneau.";
       return;
     }
 
-    // RDV trouvé → écrire le Booking_ID
+    // RDV trouvé → écrire le Booking_ID (output = booking_id)
     DONE = true;
-    log("Écriture Booking_ID: " + foundBookingId);
     dbg.style.background = "#e1f5ee";
-    dbg.innerHTML = "✅ RDV vérifié (" + foundBookingId + "). Enregistrement…";
+    dbg.innerHTML = "✅ RDV vérifié (" + output + "). Enregistrement…";
 
     return ZOHO.CRM.API.updateRecord({
       Entity: "Leads",
       RecordID: CURRENT_LEAD_ID,
-      APIData: { "id": CURRENT_LEAD_ID, "Booking_ID": foundBookingId }
+      APIData: { "id": CURRENT_LEAD_ID, "Booking_ID": output }
     });
   })
   .then(function(updResp) {
     if (!updResp) return;
-    log("Booking_ID enregistré: " + JSON.stringify(updResp));
+    log("Booking_ID enregistré");
     dbg.innerHTML = "✅ Réservation confirmée. Rafraîchissement…";
     if (ZOHO.CRM.UI && ZOHO.CRM.UI.Record && ZOHO.CRM.UI.Record.refresh) {
       ZOHO.CRM.UI.Record.refresh();
     }
   })
   .catch(function(err) {
-    log("ERREUR: " + JSON.stringify(err));
+    log("ERREUR: " + (err.message || JSON.stringify(err)));
     DONE = false;
     btn.disabled = false;
     dbg.style.background = "#fceaea";
-    dbg.innerHTML = "Erreur : " + JSON.stringify(err);
+    dbg.innerHTML = "Erreur : " + (err.message || JSON.stringify(err));
   });
 });
 
