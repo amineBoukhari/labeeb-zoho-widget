@@ -11,7 +11,6 @@
 
 <div id="inline-container"></div>
 
-<!-- Bouton de validation manuel -->
 <div style="padding:12px;text-align:center;border-top:1px solid #ccc;">
   <button id="confirmBtn" style="padding:12px 28px;background:#2d9d78;color:#fff;border:none;border-radius:6px;font-size:15px;font-weight:600;cursor:pointer;" disabled>
     Confirmer la réservation
@@ -22,7 +21,7 @@
 <script src="https://bookings.nimbuspop.com/assets/embed.js"></script>
 <script>
 var CURRENT_LEAD_ID = null;
-var ALREADY_UPDATED = false;
+var DONE = false;
 
 ZOHO.embeddedApp.on("PageLoad", function(data) {
   var dbg = document.getElementById("debug");
@@ -62,7 +61,6 @@ ZOHO.embeddedApp.on("PageLoad", function(data) {
         height: "550px"
       });
 
-      // Activer le bouton de confirmation
       document.getElementById("confirmBtn").disabled = false;
     })
     .catch(function(err) {
@@ -71,15 +69,18 @@ ZOHO.embeddedApp.on("PageLoad", function(data) {
     });
 });
 
-// ─── Enregistrer le Booking_ID (déclenché par le bouton) ───
-function saveBookingId() {
+document.getElementById("confirmBtn").addEventListener("click", function() {
+  if (DONE || !CURRENT_LEAD_ID) return;
+  DONE = true;
+
   var dbg = document.getElementById("debug");
   var btn = document.getElementById("confirmBtn");
   btn.disabled = true;
-  dbg.innerHTML = "Enregistrement de la réservation…";
+  dbg.innerHTML = "Enregistrement…";
 
   var bookingMarker = "BOOKED_" + Date.now();
 
+  // 1. Remplir le Booking_ID
   ZOHO.CRM.API.updateRecord({
     Entity: "Leads",
     RecordID: CURRENT_LEAD_ID,
@@ -87,26 +88,27 @@ function saveBookingId() {
   })
   .then(function(resp) {
     console.log("Booking_ID enregistré:", resp);
+
+    // 2. Compléter la transition Blueprint en cours → passe à "Reservation RDV"
+    if (ZOHO.CRM.BLUEPRINT && ZOHO.CRM.BLUEPRINT.proceed) {
+      return ZOHO.CRM.BLUEPRINT.proceed();
+    }
+  })
+  .then(function(bpResp) {
+    console.log("Blueprint proceed:", bpResp);
     dbg.style.background = "#e1f5ee";
-    dbg.innerHTML = "✅ RDV enregistré. Le bouton 'RDV Réservé' est disponible.";
+    dbg.innerHTML = "✅ Réservation confirmée. Lead passé à 'Reservation RDV'.";
     if (ZOHO.CRM.UI && ZOHO.CRM.UI.Record && ZOHO.CRM.UI.Record.refresh) {
       ZOHO.CRM.UI.Record.refresh();
     }
   })
   .catch(function(err) {
     console.log("Erreur:", err);
-    ALREADY_UPDATED = false;
+    DONE = false;
     btn.disabled = false;
     dbg.style.background = "#fceaea";
-    dbg.innerHTML = "Réservé, mais erreur : " + JSON.stringify(err);
+    dbg.innerHTML = "Erreur : " + JSON.stringify(err);
   });
-}
-
-// ─── Clic sur le bouton de confirmation manuelle ───
-document.getElementById("confirmBtn").addEventListener("click", function() {
-  if (ALREADY_UPDATED || !CURRENT_LEAD_ID) return;
-  ALREADY_UPDATED = true;
-  saveBookingId();
 });
 
 ZOHO.embeddedApp.init();
